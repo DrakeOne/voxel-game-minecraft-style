@@ -1,523 +1,230 @@
 'use strict';
 
-// Variables globales
+// Primero, verificar que Three.js se haya cargado correctamente
+if (typeof THREE === 'undefined') {
+ document.body.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 1.2em; color: red;">Error: La librería Three.js no se pudo cargar. Revisa tu conexión a internet o la URL del CDN.</div>';
+ throw new Error("Three.js no se ha cargado.");
+}
+
+// --- VARIABLES GLOBALES ---
 let scene, camera, renderer, clock, fpsCounter;
+
+// Controles y física del jugador
 let controls = { forward: false, backward: false, left: false, right: false, jump: false };
 let velocity = new THREE.Vector3();
-let direction = new THREE.Vector3();
-let moveSpeed = 5;
+let onGround = false;
+const moveSpeed = 5.0;
+const jumpForce = 7.0;
+const gravity = 20.0;
+const playerHeight = 1.8; // Altura de la cámara desde los pies del jugador
+
+// Rotación de la cámara
 let yaw = 0, pitch = 0;
 
-// Sistema de bloques
-let blocks = new Map(); // Almacena todos los bloques del mundo
-let selectedBlockType = 0; // Tipo de bloque seleccionado
-let raycaster = new THREE.Raycaster();
-let mouse = new THREE.Vector2();
-let highlightMesh; // Mesh para resaltar el bloque seleccionado
-let ghostMesh; // Mesh fantasma para preview de colocación
-
-// Tipos de bloques disponibles
-const BLOCK_TYPES = [
-  { name: 'Dirt', color: 0x8B4513 },     // Tierra
-  { name: 'Stone', color: 0x808080 },    // Piedra
-  { name: 'Wood', color: 0xDEB887 },     // Madera
-  { name: 'Grass', color: 0x228B22 },    // Hierba
-  { name: 'Sand', color: 0xF4A460 }      // Arena
-];
-
-// Inicialización
+// --- INICIALIZACIÓN ---
 init();
 animate();
 
+// --- FUNCIONES PRINCIPALES ---
+
+/**
+* Inicializa la escena, cámara, renderer, luces, terreno y eventos.
+*/
 function init() {
-  clock = new THREE.Clock();
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x87ceeb); // Cielo azul
-  scene.fog = new THREE.Fog(0x87ceeb, 10, 100); // Niebla para profundidad
+ clock = new THREE.Clock();
+ scene = new THREE.Scene();
+ scene.background = new THREE.Color(0x87ceeb); // Color de cielo azul
+ scene.fog = new THREE.Fog(0x87ceeb, 0, 100); // Niebla para dar profundidad
 
-  // Configuración de cámara
-  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-  camera.position.set(0, 2, 5);
+ // Cámara
+ camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+ camera.position.set(0, playerHeight, 5); // Posición inicial a la altura del jugador
 
-  // Configuración del renderer
-  renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('gameCanvas'), antialias: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+ // Renderer
+ const canvas = document.getElementById('gameCanvas');
+ renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+ renderer.setPixelRatio(window.devicePixelRatio);
+ renderer.setSize(window.innerWidth, window.innerHeight);
 
-  // Iluminación mejorada
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-  scene.add(ambientLight);
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-  directionalLight.position.set(5, 10, 7.5);
-  directionalLight.castShadow = true;
-  directionalLight.shadow.camera.near = 0.1;
-  directionalLight.shadow.camera.far = 50;
-  directionalLight.shadow.camera.left = -20;
-  directionalLight.shadow.camera.right = 20;
-  directionalLight.shadow.camera.top = 20;
-  directionalLight.shadow.camera.bottom = -20;
-  scene.add(directionalLight);
+ // Iluminación
+ const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+ scene.add(ambientLight);
+ const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+ directionalLight.position.set(15, 20, 10);
+ scene.add(directionalLight);
 
-  // Crear mundo inicial
-  createInitialWorld();
-  
-  // Crear meshes de ayuda
-  createHelperMeshes();
-  
-  // Actualizar HUD
-  updateBlockSelector();
+ // Terreno de Voxels
+ createVoxelChunk();
 
-  // Elemento HUD para mostrar FPS
-  fpsCounter = document.getElementById('fps');
+ // HUD
+ fpsCounter = document.getElementById('fps');
 
-  // Listeners para eventos
-  window.addEventListener('resize', onWindowResize, false);
-  document.addEventListener('keydown', onKeyDown, false);
-  document.addEventListener('keyup', onKeyUp, false);
-  document.addEventListener('mousemove', onMouseMove, false);
-  document.addEventListener('mousedown', onMouseClick, false);
-  document.addEventListener('contextmenu', (e) => e.preventDefault(), false);
+ // Listeners de eventos
+ window.addEventListener('resize', onWindowResize, false);
+ document.addEventListener('keydown', onKeyDown, false);
+ document.addEventListener('keyup', onKeyUp, false);
+ document.addEventListener('mousemove', onMouseMove, false);
+ canvas.addEventListener('click', () => { canvas.requestPointerLock(); });
 
-  // Configuración de controles táctiles para móviles
-  setupMobileControls();
-
-  // Pointer lock para controles de ratón en escritorio
-  const canvas = renderer.domElement;
-  canvas.addEventListener('click', function() {
-    if (!document.pointerLockElement) {
-      canvas.requestPointerLock();
-    }
-  }, false);
+ // Controles para móvil
+ setupMobileControls();
 }
 
-// Crear meshes de ayuda (highlight y ghost)
-function createHelperMeshes() {
-  // Mesh para resaltar bloque seleccionado
-  const highlightGeometry = new THREE.BoxGeometry(1.01, 1.01, 1.01);
-  const highlightMaterial = new THREE.MeshBasicMaterial({ 
-    color: 0xffffff, 
-    transparent: true, 
-    opacity: 0.3,
-    side: THREE.BackSide 
-  });
-  highlightMesh = new THREE.Mesh(highlightGeometry, highlightMaterial);
-  highlightMesh.visible = false;
-  scene.add(highlightMesh);
+/**
+* Crea un terreno plano de vóxeles usando InstancedMesh para optimización.
+*/
+function createVoxelChunk() {
+ const chunkSize = 32; // Un chunk más grande
+ const blockSize = 1;
+ const geometry = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
+ const material = new THREE.MeshLambertMaterial({ color: 0x6B8E23 }); // Verde olivo
 
-  // Mesh fantasma para preview
-  const ghostGeometry = new THREE.BoxGeometry(1, 1, 1);
-  const ghostMaterial = new THREE.MeshBasicMaterial({ 
-    color: BLOCK_TYPES[selectedBlockType].color,
-    transparent: true, 
-    opacity: 0.5 
-  });
-  ghostMesh = new THREE.Mesh(ghostGeometry, ghostMaterial);
-  ghostMesh.visible = false;
-  scene.add(ghostMesh);
+ const totalBlocks = chunkSize * chunkSize;
+ const instancedMesh = new THREE.InstancedMesh(geometry, material, totalBlocks);
+ 
+ const dummy = new THREE.Object3D();
+
+ for (let i = 0; i < chunkSize; i++) {
+   for (let j = 0; j < chunkSize; j++) {
+     const index = i * chunkSize + j;
+     // Posicionar los bloques para que su superficie superior esté en y=0
+     dummy.position.set(
+       (i - chunkSize / 2) * blockSize,
+       -blockSize / 2, 
+       (j - chunkSize / 2) * blockSize
+     );
+     dummy.updateMatrix();
+     instancedMesh.setMatrixAt(index, dummy.matrix);
+   }
+ }
+ instancedMesh.instanceMatrix.needsUpdate = true; // Marcar la matriz para actualización
+ scene.add(instancedMesh);
 }
 
-// Crear mundo inicial con diferentes tipos de bloques
-function createInitialWorld() {
-  const worldSize = 16;
-  
-  // Generar terreno con variación
-  for (let x = -worldSize/2; x < worldSize/2; x++) {
-    for (let z = -worldSize/2; z < worldSize/2; z++) {
-      // Altura variable usando ruido simple
-      const height = Math.floor(Math.sin(x * 0.3) * Math.cos(z * 0.3) * 2);
-      
-      // Colocar bloques de tierra hasta la altura
-      for (let y = -2; y <= height; y++) {
-        // Tipo de bloque según la altura
-        let blockType = 0; // Tierra por defecto
-        if (y === height && height > 0) {
-          blockType = 3; // Hierba en la superficie
-        } else if (y < -1) {
-          blockType = 1; // Piedra en profundidad
-        }
-        
-        addBlock(x, y, z, blockType);
-      }
-    }
-  }
+/**
+* Bucle de animación principal.
+*/
+function animate() {
+ requestAnimationFrame(animate);
+ const delta = Math.min(clock.getDelta(), 0.1); // Limitar delta para evitar saltos
+ 
+ updatePlayer(delta);
+ updateHUD(delta);
+ 
+ renderer.render(scene, camera);
 }
 
-// Añadir un bloque al mundo
-function addBlock(x, y, z, type = 0) {
-  const key = `${Math.round(x)},${Math.round(y)},${Math.round(z)}`;
-  
-  // Si ya existe un bloque en esa posición, no hacer nada
-  if (blocks.has(key)) return;
-  
-  const geometry = new THREE.BoxGeometry(1, 1, 1);
-  const material = new THREE.MeshLambertMaterial({ 
-    color: BLOCK_TYPES[type].color 
-  });
-  const block = new THREE.Mesh(geometry, material);
-  
-  block.position.set(Math.round(x), Math.round(y), Math.round(z));
-  block.castShadow = true;
-  block.receiveShadow = true;
-  block.userData = { type: type, position: key };
-  
-  scene.add(block);
-  blocks.set(key, block);
+/**
+* Actualiza la posición y estado del jugador (movimiento, gravedad, salto).
+* @param {number} delta - Tiempo transcurrido desde el último frame.
+*/
+function updatePlayer(delta) {
+   // Rotar la cámara según el movimiento del mouse
+   camera.rotation.order = 'YXZ';
+   camera.rotation.y = yaw;
+   camera.rotation.x = pitch;
+
+   // Obtener vectores de dirección basados en la rotación de la cámara
+   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+
+   // Calcular la dirección del movimiento horizontal
+   let moveDirection = new THREE.Vector3();
+   if (controls.forward) moveDirection.add(forward);
+   if (controls.backward) moveDirection.sub(forward);
+   if (controls.right) moveDirection.add(right);
+   if (controls.left) moveDirection.sub(right);
+   
+   moveDirection.y = 0; // No moverse verticalmente con las teclas de dirección
+   moveDirection.normalize();
+
+   // Aplicar velocidad de movimiento
+   velocity.x = moveDirection.x * moveSpeed;
+   velocity.z = moveDirection.z * moveSpeed;
+
+   // Aplicar gravedad
+   velocity.y -= gravity * delta;
+
+   // Actualizar la posición de la cámara con la velocidad
+   camera.position.addScaledVector(velocity, delta);
+
+   // Colisión con el suelo
+   if (camera.position.y < playerHeight) {
+       camera.position.y = playerHeight;
+       velocity.y = 0;
+       onGround = true;
+   } else {
+       onGround = false;
+   }
+
+   // Salto
+   if (controls.jump && onGround) {
+       velocity.y = jumpForce;
+   }
 }
 
-// Eliminar un bloque del mundo
-function removeBlock(x, y, z) {
-  const key = `${Math.round(x)},${Math.round(y)},${Math.round(z)}`;
-  const block = blocks.get(key);
-  
-  if (block) {
-    scene.remove(block);
-    blocks.delete(key);
-    
-    // Efecto de partículas (simplificado)
-    createBreakEffect(x, y, z, block.material.color);
-  }
+/**
+* Actualiza el contador de FPS en el HUD.
+* @param {number} delta - Tiempo transcurrido.
+*/
+function updateHUD(delta) {
+ if (fpsCounter) {
+   const fps = (1 / delta).toFixed(0);
+   fpsCounter.textContent = 'FPS: ' + fps;
+ }
 }
 
-// Crear efecto de ruptura
-function createBreakEffect(x, y, z, color) {
-  const particleCount = 8;
-  const particles = [];
-  
-  for (let i = 0; i < particleCount; i++) {
-    const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
-    const material = new THREE.MeshBasicMaterial({ color: color });
-    const particle = new THREE.Mesh(geometry, material);
-    
-    particle.position.set(x, y, z);
-    particle.velocity = new THREE.Vector3(
-      (Math.random() - 0.5) * 0.2,
-      Math.random() * 0.3,
-      (Math.random() - 0.5) * 0.2
-    );
-    
-    scene.add(particle);
-    particles.push(particle);
-  }
-  
-  // Animar partículas
-  let frame = 0;
-  function animateParticles() {
-    frame++;
-    if (frame > 30) {
-      particles.forEach(p => scene.remove(p));
-      return;
-    }
-    
-    particles.forEach(p => {
-      p.position.add(p.velocity);
-      p.velocity.y -= 0.02;
-      p.rotation.x += 0.1;
-      p.rotation.y += 0.1;
-    });
-    
-    requestAnimationFrame(animateParticles);
-  }
-  animateParticles();
+// --- MANEJO DE EVENTOS ---
+
+function onWindowResize() {
+ camera.aspect = window.innerWidth / window.innerHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-// Manejar clicks del mouse
-function onMouseClick(event) {
-  if (!document.pointerLockElement) return;
-  
-  // Calcular el centro de la pantalla (donde apunta la cámara)
-  mouse.x = 0;
-  mouse.y = 0;
-  
-  // Configurar el raycaster desde la cámara
-  raycaster.setFromCamera(mouse, camera);
-  
-  // Buscar intersecciones con bloques
-  const intersects = raycaster.intersectObjects(Array.from(blocks.values()));
-  
-  if (event.button === 0) { // Click izquierdo - Colocar bloque
-    if (intersects.length > 0) {
-      const intersect = intersects[0];
-      const normal = intersect.face.normal;
-      const position = intersect.object.position.clone();
-      position.add(normal);
-      
-      // Verificar que no colisione con el jugador
-      const playerPos = camera.position;
-      const blockPos = position;
-      const distance = playerPos.distanceTo(blockPos);
-      
-      if (distance > 1.5) {
-        addBlock(position.x, position.y, position.z, selectedBlockType);
-      }
-    }
-  } else if (event.button === 2) { // Click derecho - Destruir bloque
-    if (intersects.length > 0) {
-      const position = intersects[0].object.position;
-      removeBlock(position.x, position.y, position.z);
-    }
-  }
-}
-
-// Actualizar el selector de bloques en el HUD
-function updateBlockSelector() {
-  // Actualizar el HUD para mostrar el bloque seleccionado
-  const instructions = document.getElementById('instructions');
-  if (instructions) {
-    instructions.innerHTML = `
-      WASD/Flechas: Mover | Mouse: Mirar | Click Izq: Colocar | Click Der: Destruir<br>
-      Bloque: <span style="color: #${BLOCK_TYPES[selectedBlockType].color.toString(16).padStart(6, '0')}">${BLOCK_TYPES[selectedBlockType].name}</span> | 
-      Teclas 1-5: Cambiar bloque
-    `;
-  }
-  
-  // Actualizar color del ghost mesh
-  if (ghostMesh) {
-    ghostMesh.material.color.setHex(BLOCK_TYPES[selectedBlockType].color);
-  }
-}
-
-// Configurar controles táctiles para móviles
-function setupMobileControls() {
-  const btnUp = document.getElementById('btnUp');
-  const btnDown = document.getElementById('btnDown');
-  const btnLeft = document.getElementById('btnLeft');
-  const btnRight = document.getElementById('btnRight');
-  const btnJump = document.getElementById('btnJump');
-
-  if(btnUp) {
-    btnUp.addEventListener('touchstart', () => { controls.forward = true; });
-    btnUp.addEventListener('touchend', () => { controls.forward = false; });
-  }
-  if(btnDown) {
-    btnDown.addEventListener('touchstart', () => { controls.backward = true; });
-    btnDown.addEventListener('touchend', () => { controls.backward = false; });
-  }
-  if(btnLeft) {
-    btnLeft.addEventListener('touchstart', () => { controls.left = true; });
-    btnLeft.addEventListener('touchend', () => { controls.left = false; });
-  }
-  if(btnRight) {
-    btnRight.addEventListener('touchstart', () => { controls.right = true; });
-    btnRight.addEventListener('touchend', () => { controls.right = false; });
-  }
-  if(btnJump) {
-    btnJump.addEventListener('touchstart', () => { controls.jump = true; });
-    btnJump.addEventListener('touchend', () => { controls.jump = false; });
-  }
-  
-  // Añadir botones para colocar/destruir en móvil
-  const mobileControls = document.getElementById('mobile-controls');
-  if (mobileControls && !document.getElementById('btnPlace')) {
-    const btnPlace = document.createElement('div');
-    btnPlace.id = 'btnPlace';
-    btnPlace.className = 'touch-button';
-    btnPlace.innerHTML = '⬜';
-    btnPlace.addEventListener('touchstart', () => {
-      // Simular click izquierdo
-      onMouseClick({ button: 0 });
-    });
-    mobileControls.appendChild(btnPlace);
-    
-    const btnBreak = document.createElement('div');
-    btnBreak.id = 'btnBreak';
-    btnBreak.className = 'touch-button';
-    btnBreak.innerHTML = '⛏️';
-    btnBreak.addEventListener('touchstart', () => {
-      // Simular click derecho
-      onMouseClick({ button: 2 });
-    });
-    mobileControls.appendChild(btnBreak);
-  }
-}
-
-// Manejo de eventos de teclado
 function onKeyDown(event) {
-  switch (event.code) {
-    case 'KeyW':
-    case 'ArrowUp':
-      controls.forward = true;
-      break;
-    case 'KeyS':
-    case 'ArrowDown':
-      controls.backward = true;
-      break;
-    case 'KeyA':
-    case 'ArrowLeft':
-      controls.left = true;
-      break;
-    case 'KeyD':
-    case 'ArrowRight':
-      controls.right = true;
-      break;
-    case 'Space':
-      controls.jump = true;
-      break;
-    // Selección de bloques con teclas numéricas
-    case 'Digit1':
-      selectedBlockType = 0;
-      updateBlockSelector();
-      break;
-    case 'Digit2':
-      selectedBlockType = 1;
-      updateBlockSelector();
-      break;
-    case 'Digit3':
-      selectedBlockType = 2;
-      updateBlockSelector();
-      break;
-    case 'Digit4':
-      selectedBlockType = 3;
-      updateBlockSelector();
-      break;
-    case 'Digit5':
-      selectedBlockType = 4;
-      updateBlockSelector();
-      break;
-  }
+ switch (event.code) {
+   case 'KeyW': case 'ArrowUp': controls.forward = true; break;
+   case 'KeyS': case 'ArrowDown': controls.backward = true; break;
+   case 'KeyA': case 'ArrowLeft': controls.left = true; break;
+   case 'KeyD': case 'ArrowRight': controls.right = true; break;
+   case 'Space': controls.jump = true; break;
+ }
 }
 
 function onKeyUp(event) {
-  switch (event.code) {
-    case 'KeyW':
-    case 'ArrowUp':
-      controls.forward = false;
-      break;
-    case 'KeyS':
-    case 'ArrowDown':
-      controls.backward = false;
-      break;
-    case 'KeyA':
-    case 'ArrowLeft':
-      controls.left = false;
-      break;
-    case 'KeyD':
-    case 'ArrowRight':
-      controls.right = false;
-      break;
-    case 'Space':
-      controls.jump = false;
-      break;
-  }
+ switch (event.code) {
+   case 'KeyW': case 'ArrowUp': controls.forward = false; break;
+   case 'KeyS': case 'ArrowDown': controls.backward = false; break;
+   case 'KeyA': case 'ArrowLeft': controls.left = false; break;
+   case 'KeyD': case 'ArrowRight': controls.right = false; break;
+   case 'Space': controls.jump = false; break;
+ }
 }
 
-// Manejo del movimiento del ratón
 function onMouseMove(event) {
-  if (document.pointerLockElement === renderer.domElement) {
-    const movementX = event.movementX || 0;
-    const movementY = event.movementY || 0;
-    const sensitivity = 0.002;
-    yaw -= movementX * sensitivity;
-    pitch -= movementY * sensitivity;
-    pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch));
-  }
+ if (document.pointerLockElement === renderer.domElement) {
+   const sensitivity = 0.002;
+   yaw -= event.movementX * sensitivity;
+   pitch -= event.movementY * sensitivity;
+   pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch)); // Limitar vista vertical
+ }
 }
 
-function onWindowResize() {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-}
+function setupMobileControls() {
+   const buttons = {
+       btnUp: 'forward',
+       btnDown: 'backward',
+       btnLeft: 'left',
+       btnRight: 'right',
+       btnJump: 'jump'
+   };
 
-// Loop de animación
-function animate() {
-  requestAnimationFrame(animate);
-  const delta = clock.getDelta();
-  updateControls(delta);
-  updateRaycaster();
-  updateHUD();
-  renderer.render(scene, camera);
-}
-
-// Actualizar el raycaster para highlight y preview
-function updateRaycaster() {
-  if (!document.pointerLockElement) {
-    highlightMesh.visible = false;
-    ghostMesh.visible = false;
-    return;
-  }
-  
-  // Raycaster desde el centro de la pantalla
-  mouse.x = 0;
-  mouse.y = 0;
-  raycaster.setFromCamera(mouse, camera);
-  
-  const intersects = raycaster.intersectObjects(Array.from(blocks.values()));
-  
-  if (intersects.length > 0) {
-    const intersect = intersects[0];
-    const position = intersect.object.position;
-    
-    // Mostrar highlight en el bloque apuntado
-    highlightMesh.position.copy(position);
-    highlightMesh.visible = true;
-    
-    // Mostrar preview del bloque a colocar
-    const normal = intersect.face.normal;
-    const ghostPosition = position.clone().add(normal);
-    ghostMesh.position.copy(ghostPosition);
-    ghostMesh.visible = true;
-  } else {
-    highlightMesh.visible = false;
-    ghostMesh.visible = false;
-  }
-}
-
-// Actualización de controles del jugador
-function updateControls(delta) {
-  // Cálculo del vector "forward"
-  const cosPitch = Math.cos(pitch);
-  const forward = new THREE.Vector3(Math.sin(yaw) * cosPitch, 0, Math.cos(yaw) * cosPitch);
-  forward.normalize();
-
-  // Vector perpendicular para movimiento lateral
-  const right = new THREE.Vector3(Math.sin(yaw - Math.PI / 2), 0, Math.cos(yaw - Math.PI / 2));
-  right.normalize();
-
-  // Actualiza la rotación de la cámara
-  camera.rotation.order = 'YXZ';
-  camera.rotation.y = yaw;
-  camera.rotation.x = pitch;
-
-  direction.set(0, 0, 0);
-  if (controls.forward) direction.add(forward);
-  if (controls.backward) direction.sub(forward);
-  if (controls.left) direction.sub(right);
-  if (controls.right) direction.add(right);
-  direction.normalize();
-
-  // Velocidad horizontal
-  velocity.x = direction.x * moveSpeed;
-  velocity.z = direction.z * moveSpeed;
-
-  // Salto y gravedad
-  if (controls.jump && Math.abs(camera.position.y - 2) < 0.1) {
-    velocity.y = 8;
-  }
-  velocity.y -= 9.8 * delta;
-  
-  // Aplicar velocidad
-  camera.position.addScaledVector(velocity, delta);
-
-  // Colisión con el suelo
-  if (camera.position.y < 2) {
-    camera.position.y = 2;
-    velocity.y = 0;
-  }
-  
-  // Colisión simple con bloques (evitar atravesar bloques)
-  const playerKey = `${Math.round(camera.position.x)},${Math.round(camera.position.y - 1)},${Math.round(camera.position.z)}`;
-  if (blocks.has(playerKey)) {
-    camera.position.y = Math.round(camera.position.y) + 1;
-    velocity.y = 0;
-  }
-}
-
-// Actualizar HUD
-function updateHUD() {
-  const fps = (1 / clock.getDelta()).toFixed(1);
-  if (fpsCounter) {
-    fpsCounter.innerHTML = `FPS: ${fps} | Bloques: ${blocks.size}`;
-  }
+   for (const [id, control] of Object.entries(buttons)) {
+       const button = document.getElementById(id);
+       if (button) {
+           button.addEventListener('touchstart', (e) => { e.preventDefault(); controls[control] = true; }, { passive: false });
+           button.addEventListener('touchend', (e) => { e.preventDefault(); controls[control] = false; });
+       }
+   }
 }
