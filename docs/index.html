@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Voxel Game</title>
+<link rel="stylesheet" href="style.css">
+<!-- Cargando Three.js desde CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r136/three.min.js"></script>
+</head>
+<body>
+<!-- Canvas para renderizar la escena -->
+<canvas id="gameCanvas"></canvas>
+
+<!-- HUD overlay -->
+<div id="hud">
+  <div id="fps">FPS: 0</div>
+  <div id="instructions">Usa WASD o las flechas para moverte y el mouse o controles táctiles para mirar alrededor.</div>
+  
+  <!-- Controles móviles (aparecen sólo en pantallas pequeñas) -->
+  <div id="mobile-controls">
+    <div class="touch-button" id="btnUp">&#8679;</div>
+    <div class="touch-button" id="btnLeft">&#8678;</div>
+    <div class="touch-button" id="btnDown">&#8681;</div>
+    <div class="touch-button" id="btnRight">&#8680;</div>
+    <div class="touch-button" id="btnJump">Jump</div>
+  </div>
+</div>
+
+<!-- Código principal del juego -->
+<script src="main.js"></script>
+</body>
+</html>
