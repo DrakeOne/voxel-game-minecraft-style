@@ -1,0 +1,64 @@
+/* Estilos básicos y responsivos para el juego y el HUD */
+body, html {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: Arial, sans-serif;
+  background-color: #000;
+  color: #fff;
+}
+
+#gameCanvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+}
+
+#hud {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+}
+
+#fps {
+  margin-bottom: 10px;
+  font-size: 18px;
+}
+
+#instructions {
+  margin-bottom: 10px;
+  font-size: 16px;
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 5px 10px;
+  border-radius: 5px;
+}
+
+#mobile-controls {
+  display: none; /* Se mostrará en dispositivos móviles mediante media queries */
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  gap: 10px;
+}
+
+.touch-button {
+  width: 60px;
+  height: 60px;
+  background: rgba(255, 255, 255, 0.2);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  text-align: center;
+  line-height: 60px;
+  font-size: 24px;
+  user-select: none;
+}
+
+/* Mostrar controles táctiles en dispositivos con pantalla pequeña */
+@media (max-width: 768px) {
+  #mobile-controls {
+    display: flex;
+  }
+}
