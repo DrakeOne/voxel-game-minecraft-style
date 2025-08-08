@@ -5,13 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Voxel Game</title>
 <link rel="stylesheet" href="style.css">
-<!--
-  Cargando Three.js desde un CDN fiable (jsDelivr).
-  El atributo 'defer' es CRÍTICO aquí. Le dice al navegador que descargue el script
-  pero que espere a que el HTML esté completamente analizado antes de ejecutarlo.
-  Esto previene errores de 'THREE is not defined'.
--->
-<script src="https://cdn.jsdelivr.net/npm/three@0.136.0/build/three.min.js" defer></script>
+<!-- Three.js cargado de forma síncrona para garantizar disponibilidad -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.136.0/build/three.min.js"></script>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
@@ -29,11 +24,35 @@
   <div class="touch-button" id="btnJump">Jump</div>
 </div>
 
-<!--
-  El script principal del juego.
-  'defer' asegura que se ejecute DESPUÉS de three.min.js, garantizando
-  que la variable 'THREE' estará disponible.
--->
-<script src="main.js" defer></script>
+<!-- Script principal con verificación de carga -->
+<script>
+// Esperamos a que Three.js esté completamente cargado
+if (typeof THREE === 'undefined') {
+  // Si THREE no está definido, esperamos y recargamos
+  console.log('Esperando a que Three.js se cargue...');
+  window.addEventListener('load', function() {
+    if (typeof THREE === 'undefined') {
+      // Forzar recarga si aún no está disponible
+      setTimeout(() => location.reload(), 1000);
+    }
+  });
+} else {
+  // Si THREE está disponible, cargamos el script principal
+  const script = document.createElement('script');
+  script.src = 'main.js?v=' + Date.now(); // Añadimos versión para evitar caché
+  document.body.appendChild(script);
+}
+
+// Fallback: cargar main.js después de que todo esté listo
+window.addEventListener('load', function() {
+  setTimeout(function() {
+    if (typeof THREE !== 'undefined' && !document.querySelector('script[src^="main.js"]')) {
+      const script = document.createElement('script');
+      script.src = 'main.js?v=' + Date.now();
+      document.body.appendChild(script);
+    }
+  }, 100);
+});
+</script>
 </body>
 </html>
